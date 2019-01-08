@@ -217,7 +217,6 @@ impl Ray {
 		self.A + t * self.B
 	}
 }
-M8G6ZiAmSbUP
 fn color(r: Ray) -> Vec3{
 	let t = hit_sphere(&Vec3::new(0.0, 0.0, -1.0), 0.5, &r);
 	if t > 0.0{
