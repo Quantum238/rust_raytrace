@@ -1,7 +1,164 @@
+extern crate rand;
 use std::fs::File;
 use std::io::prelude::*;
 use std::ops::{Add, Sub, Index, AddAssign, SubAssign, Mul, Div, MulAssign, DivAssign};
 // use std::path::Path;
+use std::fmt::Debug;
+use rand::Rng;
+
+trait Material<T>: Debug where T: Material<T>{
+	fn scatter(r_in: Ray, attenuation: Vec3, scattered: Ray, hit_record: HitRecord) -> Option<Vec3>;
+}
+
+#[derive(Debug)]
+struct Lambertian {
+	albedo: Vec3,
+}
+impl Lambertian {
+	fn new(a: Vec3) -> Self{
+		Lambertian {albedo: a}
+	}
+	// add code here
+}
+impl Material for Lambertian{
+	fn scatter(&self, r_in: Ray, attenuation: Vec3, scattered: Ray, hit_record: HitRecord) -> Option<Vec3>{
+		let target = hit_record.p + hit_record.normal + random_in_unit_sphere();
+		let scattered = Ray::new(target - hit_record.p);
+		Some(self.albedo)
+		
+	}
+}
+
+#[derive(Debug)]
+struct Metal {
+	albedo: Vec3,
+}
+impl Material for Metal{
+	fn scatter(&self, r_in: Ray, attenuation: Vec3, scattered: Ray, hit_record: HitRecord) -> bool{
+		let reflected = Vec3::reflect(Vec3::unit_vector(r_in.direction()), hit_record.normal);
+		let scattered = Ray::new(hit_record.p, reflected);
+		attenuation = albedo;
+		Vec3::dot(scattered.direction(), hit_record.normal) > 0
+	}
+}
+
+#[derive(Debug, Copy, Clone)]
+struct Camera{
+	lower_left_corner: Vec3,
+	horizontal: Vec3,
+	vertical: Vec3,
+	origin: Vec3,
+}
+impl Camera{
+	fn new() -> Self{
+		Camera {
+			lower_left_corner: Vec3::new(-2.0, -1.0, -1.0),
+			horizontal: Vec3::new(4.0, 0.0, 0.0),
+			vertical: Vec3::new(0.0, 2.0, 0.0),
+			origin: Vec3::new(0.0, 0.0, 0.0),
+		}
+	}
+	fn get_ray(&self, u: f64, v: f64) -> Ray{
+		Ray::new(self.origin, self.lower_left_corner + u*self.horizontal + v*self.vertical - self.origin)
+	}
+}
+
+#[derive(Debug, Copy, Clone)]
+struct HitRecord<T: Material<T>>{
+	t: f64,
+	p: Vec3,
+	normal: Vec3,
+	material: T,
+
+}
+impl<T: Material<T>> HitRecord<T>{
+	fn new(t: f64, p: Vec3, normal: Vec3, mat: T) -> Self{
+		HitRecord {t: t, p: p, normal: normal, material: mat,}
+	}
+	fn new_from_empty() -> Self{
+		HitRecord {t: 0.0, p: Vec3::new(0.0, 0.0, 0.0), normal:Vec3::new(0.0, 0.0, 0.0)}
+	}
+}
+trait Hitable<T>: Debug where T: Material<T> {
+	fn hit(&self, r: &Ray, t_min: f64, t_max: f64) -> Option<HitRecord<T>>;
+}
+
+#[derive(Debug, Copy, Clone)]
+struct Sphere{
+	center: Vec3,
+	radius: f64,
+}
+impl Sphere {
+	fn new(cen: Vec3, r: f64) -> Self{
+		Sphere{ center: cen, radius: r}
+	}
+}
+impl<T> Hitable<T> for Sphere where T: Material<T>{
+	fn hit(&self, r: &Ray, t_min: f64, t_max: f64) -> Option<HitRecord<T>>{
+		let oc = *r.origin() - self.center;
+		let a = Vec3::dot(*r.direction(), *r.direction());
+		let b = Vec3::dot(oc, *r.direction());
+		let c = Vec3::dot(oc, oc) - self.radius * self.radius;
+		let mut record = HitRecord::new_from_empty();
+
+		let discriminant = b * b - a * c;
+		if discriminant > 0.0{
+			let root = (-b - discriminant.sqrt()) / a;
+			if root < t_max && root > t_min {
+				record.t = root;
+				record.p = r.point_at_parameter(record.t);
+				record.normal = (record.p - self.center) / self.radius;
+				return Some(record);
+			}
+			let root = (-b + discriminant.sqrt()) / a;
+			if root < t_max && root > t_min{
+				record.t = root;
+				record.p = r.point_at_parameter(record.t);
+				record.normal = (record.p - self.center) / self.radius;
+				return Some(record);
+			}
+		}
+		None
+	}
+}
+
+#[derive(Debug)]
+struct HitableList<T: Hitable<T>> where T: Material<T>{
+	list: Vec<T>,
+	list_size: usize
+}
+impl<T: Hitable<T>> HitableList<T> where T: Material<T>{
+	fn new(l: Vec<T>, n: usize) -> Self{
+		HitableList {
+			list: l,
+			list_size: n
+		}
+	}
+}
+impl<T: Hitable<T>> Hitable<T> for HitableList<T> where T: Material<T>{
+	fn hit(&self, r: &Ray, t_min: f64, t_max: f64) -> Option<HitRecord<T>>{
+		let mut hit_anything = false;
+		let mut closest_so_far = t_max;
+		let mut record = HitRecord::new_from_empty();
+		for i in 0..self.list_size{
+			let entry_hit_record = self.list[i].hit(r, t_min, closest_so_far);
+			match entry_hit_record {
+				Some(hit_record) => {
+					hit_anything = true;
+					closest_so_far = hit_record.t;
+					record.t = hit_record.t;
+					record.p = hit_record.p;
+					record.normal = hit_record.normal;
+				},
+				None => {},
+			};
+		}
+		if hit_anything{
+			return Some(record);
+		}
+		None
+	}
+}
 
 #[derive(Debug, Copy, Clone)]
 struct Vec3 {
@@ -192,6 +349,10 @@ impl Vec3 {
 			z: (self.x * other.y - self.y * other.x),
 		}
 	}
+
+	fn reflect(v: Self, n: Self) -> Self{
+	v - 2 * Vec3::dot(v, n) * n
+}
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -217,33 +378,41 @@ impl Ray {
 		self.A + t * self.B
 	}
 }
-M8G6ZiAmSbUP
-fn color(r: Ray) -> Vec3{
-	let t = hit_sphere(&Vec3::new(0.0, 0.0, -1.0), 0.5, &r);
-	if t > 0.0{
-		let N = Vec3::unit_vector(r.point_at_parameter(t) - Vec3::new(0.0, 0.0, -1.0));
-		return 0.5 * Vec3::new(N.x + 1.0, N.y + 1.0, N.z + 1.0);
+fn random_in_unit_sphere() -> Vec3{
+	let mut p = Vec3::new(10.0, 10.0, 10.0);
+	let mut rng = rand::thread_rng();
+	while p.squared_length() >= 1.0{
+		let rand1: f64 = rng.gen();
+		let rand2: f64 = rng.gen();
+		let rand3: f64 = rng.gen();
+		p = 2.0 * Vec3::new(rand1, rand2, rand3) - Vec3::new(1.0,1.0,1.0);
 	}
+	p
+}
+fn color<T: Hitable<T>>(r: Ray, world: &T) -> Vec3 where T: Material<T>{
+	let world_hit = world.hit(&r, 0.001, std::f64::MAX);
+	match world_hit {
+		Some(hit_record) => {
+			let target = hit_record.p + hit_record.normal + random_in_unit_sphere();
+			return 0.5 * color(Ray::new(hit_record.p, target - hit_record.p), world);
+		}
+		None => {
+		},
+	};
+
 	let unit_direction = Vec3::unit_vector_from_ref(r.direction());
 	let t = 0.5 * (unit_direction.y  + 1.0);
 	(1.0 - t) * Vec3::new(1.0, 1.0, 1.0) + t * Vec3::new(0.5, 0.7, 1.0)
 }
-fn hit_sphere(center: &Vec3, radius: f64, r: &Ray) -> f64{
-	let oc = *r.origin() - center;
-	let a = Vec3::dot(*r.direction(), *r.direction());
-	let b = 2.0 * Vec3::dot(oc, *r.direction());
-	let c = Vec3::dot(oc, oc) - radius * radius;
-	let discriminant = b * b - 4.0 * a * c;
-	if discriminant < 0.0{
-		return -1.0;
-	}
-	(-b - discriminant.sqrt()) / (2.0 * a)
-}
+
 fn main() {
 	let mut file = File::create("out/image.ppm").expect("Hey why can't I write?!");
 	let mut output = String::new();
+
 	let nx = 200;
 	let ny = 100;
+	let ns = 100;
+
 	output += &format!("P3\n");
 	output += &format!("{:?} {:?}\n", nx, ny);
 	output += &format!("255\n");
@@ -252,15 +421,32 @@ fn main() {
 	let horizontal = Vec3::new(4.0, 0.0, 0.0);
 	let vertical = Vec3::new(0.0, 2.0, 0.0);
 	let origin = Vec3::new(0.0, 0.0, 0.0);
+
+	let list = vec![
+		Sphere::new(Vec3::new(0.0, 0.0, -1.0), 0.5),
+		Sphere::new(Vec3::new(0.0, -100.5, -1.0), 100.0)
+	];
+	let world = HitableList::new(list, 2);
+	let cam = Camera::new();
+
+	let mut rng = rand::thread_rng();
+
 	for j2 in 0..=ny-1{
 		let j = (ny - 1) - j2;
 		for i in 0..=(nx - 1){
-
-			let u = i as f64 / nx as f64;
-			let v = j as f64 / ny as f64;
-
-			let r = Ray::new(origin, lower_left_corner + u * horizontal + v * vertical);
-			let col = color(r);
+			println!("{:?}, {:?}",i, j );
+			let mut col = Vec3::new(0.0, 0.0, 0.0);
+			for s in 0..ns{
+				let rand1: f64 = rng.gen();
+				let rand2: f64 = rng.gen();
+				let u = (i as f64 + rand1)/ nx as f64;
+				let v = (j as f64 + rand2) / ny as f64;
+				let r = cam.get_ray(u, v);
+				let p = r.point_at_parameter(2.0);
+				col += color(r, &world);
+			}
+			col /= ns as f64;
+			col = Vec3::new(col[0].sqrt(), col[1].sqrt(), col[2].sqrt());
 
 			let ir = (255.99 * col[0]) as i64;
 			let ig = (255.99 * col[1]) as i64;
